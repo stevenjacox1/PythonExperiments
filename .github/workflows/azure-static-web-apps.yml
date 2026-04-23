@@ -9,11 +9,17 @@ on:
     branches:
       - main
 
+concurrency:
+  group: swa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and Deploy Job
+    outputs:
+      static_web_app_url: ${{ steps.builddeploy.outputs.static_web_app_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +53,44 @@ jobs:
           api_location: "api"
           output_location: ""
           skip_app_build: true
+
+  post_deploy_health_check:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    name: Post-Deploy Health Check
+    needs: build_and_deploy_job
+    steps:
+      - name: Validate API health endpoint
+        env:
+          STATIC_WEB_APP_URL: ${{ needs.build_and_deploy_job.outputs.static_web_app_url }}
+        shell: bash
+        run: |
+          if [ -z "$STATIC_WEB_APP_URL" ]; then
+            echo "Static Web App URL was not returned by deployment output."
+            exit 1
+          fi
+
+          HEALTH_URL="${STATIC_WEB_APP_URL%/}/api/health"
+          echo "Checking health endpoint: $HEALTH_URL"
+
+          ATTEMPTS=20
+          DELAY_SECONDS=15
+          for i in $(seq 1 "$ATTEMPTS"); do
+            BODY=$(curl -sS --max-time 20 "$HEALTH_URL" || true)
+            if echo "$BODY" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+              echo "Health check passed on attempt $i/$ATTEMPTS"
+              exit 0
+            fi
+
+            echo "Attempt $i/$ATTEMPTS did not return healthy status."
+            echo "Response: $BODY"
+            if [ "$i" -lt "$ATTEMPTS" ]; then
+              sleep "$DELAY_SECONDS"
+            fi
+          done
+
+          echo "Health check failed after $ATTEMPTS attempts."
+          exit 1
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
