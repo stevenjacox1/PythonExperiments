@@ -1,0 +1,13 @@
+{
+  "name": "python-experiments",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n storage,api,web -c cyan,green,magenta \"npm run dev:storage\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:storage": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-storage.ps1",
+    "dev:api": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-api.ps1",
+    "dev:web": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-web.ps1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
