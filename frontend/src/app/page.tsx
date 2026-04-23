@@ -24,50 +24,6 @@ type ConsumptionItem = {
   fdc_id?: number;
 };
 
-// Mock data generator for testing
-function generateMockData(userId: string, daysBack: number): ConsumptionItem[] {
-  const mockItems = [
-    { description: "Banana", calories: 89, servingSize: "1 medium (118g)", basis: "per serving" },
-    { description: "Chicken Breast", calories: 165, servingSize: "100g", basis: "per 100 g" },
-    { description: "Brown Rice", calories: 112, servingSize: "1 cup cooked (195g)", basis: "per serving" },
-    { description: "Broccoli", calories: 55, servingSize: "1 cup (156g)", basis: "per serving" },
-    { description: "Salmon Fillet", calories: 280, servingSize: "100g", basis: "per 100 g" },
-    { description: "Greek Yogurt", calories: 130, servingSize: "1 cup (227g)", basis: "per serving" },
-    { description: "Almonds", calories: 579, servingSize: "100g", basis: "per 100 g" },
-    { description: "Whole Wheat Bread", calories: 80, servingSize: "1 slice (28g)", basis: "per serving" },
-  ];
-
-  const result: ConsumptionItem[] = [];
-
-  for (let dayOffset = 0; dayOffset <= daysBack; dayOffset++) {
-    const date = new Date();
-    date.setDate(date.getDate() - dayOffset);
-    date.setHours(Math.floor(Math.random() * 20), Math.floor(Math.random() * 60), 0, 0);
-
-    // 2-4 items per day
-    const itemsPerDay = Math.floor(Math.random() * 3) + 2;
-
-    for (let i = 0; i < itemsPerDay; i++) {
-      const mockItem = mockItems[Math.floor(Math.random() * mockItems.length)];
-      const quantity = Math.random() < 0.5 ? 1 : Math.round(Math.random() * 2 * 4) / 4;
-
-      result.push({
-        id: `mock-${dayOffset}-${i}-${Math.random().toString(36).substr(2, 9)}`,
-        user_id: userId,
-        food_description: mockItem.description,
-        serving_size_text: mockItem.servingSize,
-        calorie_basis_text: mockItem.basis,
-        quantity,
-        calories_per_serving: mockItem.calories,
-        total_calories: mockItem.calories * quantity,
-        consumed_at: date.toISOString(),
-      });
-    }
-  }
-
-  return result.sort((a, b) => new Date(b.consumed_at).getTime() - new Date(a.consumed_at).getTime());
-}
-
 export default function Home() {
   const apiBaseUrl = useMemo(
     () => process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api",
@@ -83,7 +39,6 @@ export default function Home() {
   const [quantityByFood, setQuantityByFood] = useState<Record<number, number>>({});
   const [message, setMessage] = useState("");
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [useMockData, setUseMockData] = useState(false);
   const [pendingDeleteItem, setPendingDeleteItem] = useState<ConsumptionItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -107,12 +62,6 @@ export default function Home() {
 
   const loadConsumptions = useCallback(async () => {
     try {
-      if (useMockData) {
-        const mockData = generateMockData(userId, 4);
-        setAllConsumptions(mockData);
-        return;
-      }
-
       const response = await fetch(
         `${apiBaseUrl}/consumptions?user_id=${encodeURIComponent(userId)}`,
         { cache: "no-store" },
@@ -127,7 +76,7 @@ export default function Home() {
     } catch {
       setMessage("Could not load consumption log. Check backend configuration.");
     }
-  }, [apiBaseUrl, userId, useMockData]);
+  }, [apiBaseUrl, userId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -215,12 +164,6 @@ export default function Home() {
   async function deleteConsumption(itemId: string) {
     try {
       setIsDeleting(true);
-
-      if (useMockData) {
-        setAllConsumptions((prev) => prev.filter((item) => item.id !== itemId));
-        setMessage("Item deleted successfully.");
-        return;
-      }
 
       const response = await fetch(
         `${apiBaseUrl}/consumptions/${encodeURIComponent(itemId)}?user_id=${encodeURIComponent(userId)}`,
@@ -310,19 +253,6 @@ export default function Home() {
               )}
             </div>
           </div>
-          <button
-            onClick={() => {
-              setUseMockData(!useMockData);
-              void loadConsumptions();
-            }}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${
-              useMockData
-                ? "bg-blue-100 text-blue-900 hover:bg-blue-200"
-                : "border border-zinc-300 hover:bg-zinc-100"
-            }`}
-          >
-            {useMockData ? "Using Mock Data" : "Load Mock Data"}
-          </button>
         </div>
       </nav>
 
