@@ -37,6 +37,7 @@ export default function Home() {
   const [results, setResults] = useState<FoodSearchItem[]>([]);
   const [allConsumptions, setAllConsumptions] = useState<ConsumptionItem[]>([]);
   const [quantityByFood, setQuantityByFood] = useState<Record<number, number>>({});
+  const [gramsByFood, setGramsByFood] = useState<Record<number, number>>({});
   const [message, setMessage] = useState("");
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [pendingDeleteItem, setPendingDeleteItem] = useState<ConsumptionItem | null>(null);
@@ -130,8 +131,22 @@ export default function Home() {
     }
   }
 
+  function parseServingGrams(servingSizeText: string | null | undefined): number | null {
+    if (!servingSizeText) return null;
+    const direct = servingSizeText.match(/^(\d+\.?\d*)\s*g\b/i);
+    if (direct) return parseFloat(direct[1]);
+    const parenthetical = servingSizeText.match(/\((\d+\.?\d*)\s*g\)/i);
+    if (parenthetical) return parseFloat(parenthetical[1]);
+    return null;
+  }
+
   async function addConsumption(food: FoodSearchItem) {
-    const quantity = quantityByFood[food.fdc_id] ?? 1;
+    const rawGrams = gramsByFood[food.fdc_id];
+    const servingGrams = parseServingGrams(food.serving_size_text);
+    const quantity =
+      rawGrams && rawGrams > 0 && servingGrams
+        ? rawGrams / servingGrams
+        : (quantityByFood[food.fdc_id] ?? 1);
     try {
       const response = await fetch(`${apiBaseUrl}/consumptions`, {
         method: "POST",
@@ -305,26 +320,53 @@ export default function Home() {
                   <p className="text-sm text-zinc-500">
                     Serving size: {food.serving_size_text ?? "Not specified by USDA"}
                   </p>
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <label className="flex items-center gap-2 text-sm">
-                      Qty
-                      <input
-                        type="number"
-                        min={0.25}
-                        step={0.25}
-                        value={quantityByFood[food.fdc_id] ?? 1}
-                        onChange={(e) =>
-                          setQuantityByFood((prev) => ({
-                            ...prev,
-                            [food.fdc_id]: Number(e.target.value),
-                          }))
-                        }
-                        className="w-24 rounded-lg border border-zinc-300 px-2 py-1"
-                      />
-                    </label>
+                  <div className="mt-3 flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="flex items-center gap-2 text-sm">
+                        Qty
+                        <input
+                          type="number"
+                          min={0.25}
+                          step={0.25}
+                          value={quantityByFood[food.fdc_id] ?? 1}
+                          onChange={(e) => {
+                            setQuantityByFood((prev) => ({ ...prev, [food.fdc_id]: Number(e.target.value) }));
+                            setGramsByFood((prev) => { const next = { ...prev }; delete next[food.fdc_id]; return next; });
+                          }}
+                          className="w-20 rounded-lg border border-zinc-300 px-2 py-1"
+                        />
+                      </label>
+                      {parseServingGrams(food.serving_size_text) !== null && (
+                        <label className="flex items-center gap-2 text-sm text-zinc-500">
+                          or
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={gramsByFood[food.fdc_id] ?? ""}
+                            placeholder="g"
+                            onChange={(e) => {
+                              const g = Number(e.target.value);
+                              if (g > 0) {
+                                setGramsByFood((prev) => ({ ...prev, [food.fdc_id]: g }));
+                              } else {
+                                setGramsByFood((prev) => { const next = { ...prev }; delete next[food.fdc_id]; return next; });
+                              }
+                            }}
+                            className="w-20 rounded-lg border border-zinc-300 px-2 py-1"
+                          />
+                          <span>g</span>
+                        </label>
+                      )}
+                    </div>
+                    {(gramsByFood[food.fdc_id] ?? 0) > 0 && parseServingGrams(food.serving_size_text) !== null && (
+                      <p className="text-xs text-zinc-500">
+                        ≈ {((gramsByFood[food.fdc_id]! / parseServingGrams(food.serving_size_text)!) * food.calories_per_serving).toFixed(1)} cal
+                      </p>
+                    )}
                     <button
                       type="button"
-                      className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100"
+                      className="self-start rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-100"
                       onClick={() => void addConsumption(food)}
                     >
                       Add to Log
