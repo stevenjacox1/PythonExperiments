@@ -99,25 +99,23 @@ jobs:
             echo "Using SWA from deployment output: $SWA_NAME"
           fi
 
-          FUNCTION_APP_NAME="${SWA_NAME}-api"
+          echo "Found SWA: $SWA_NAME"
+          echo "Configuring SWA app settings with database credentials..."
 
-          echo "Configuring Function App: $FUNCTION_APP_NAME in resource group: $RESOURCE_GROUP"
-
-          # Set all required application settings
-          az functionapp config appsettings set \
-            --name "$FUNCTION_APP_NAME" \
+          # Set all required application settings for the SWA managed Function App
+          az staticwebapp appsettings set \
+            --name "$SWA_NAME" \
             --resource-group "$RESOURCE_GROUP" \
-            --settings \
-              MYSQL_HOST="${{ secrets.MYSQL_HOST }}" \
-              MYSQL_PORT="${{ secrets.MYSQL_PORT }}" \
-              MYSQL_USER="${{ secrets.MYSQL_USER }}" \
-              MYSQL_PASSWORD="${{ secrets.MYSQL_PASSWORD }}" \
-              MYSQL_DATABASE="${{ secrets.MYSQL_DATABASE }}" \
-              CALORIE_LOG_TABLE_NAME="${{ secrets.CALORIE_LOG_TABLE_NAME }}" \
-              USDA_API_KEY="${{ secrets.USDA_API_KEY }}" \
-              FUNCTIONS_WORKER_RUNTIME="python"
+            --setting-names \
+              "MYSQL_HOST=${{ secrets.MYSQL_HOST }}" \
+              "MYSQL_PORT=${{ secrets.MYSQL_PORT }}" \
+              "MYSQL_USER=${{ secrets.MYSQL_USER }}" \
+              "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" \
+              "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" \
+              "CALORIE_LOG_TABLE_NAME=${{ secrets.CALORIE_LOG_TABLE_NAME }}" \
+              "USDA_API_KEY=${{ secrets.USDA_API_KEY }}"
           
-          echo "Function App settings configured successfully."
+          echo "SWA app settings configured successfully."
 
       - name: Azure Logout
         run: az logout
