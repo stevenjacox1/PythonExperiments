@@ -172,7 +172,7 @@ export default function Home() {
       setMessage(`Saved ${food.description} to your consumption log.`);
       await loadConsumptions();
     } catch {
-      setMessage("Could not save item. Verify Azure Table Storage configuration.");
+      setMessage("Could not save item. Verify MySQL configuration.");
     }
   }
 
@@ -280,7 +280,7 @@ export default function Home() {
             Track meals with USDA FoodData Central
           </h1>
           <p className="max-w-3xl text-zinc-600">
-            Search foods from USDA, log what you consumed, and persist your entries in Azure Table Storage.
+            Search foods from USDA, log what you consumed, and persist your entries in MySQL.
           </p>
         </header>
 

@@ -4,9 +4,10 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
-from azure.data.tables import TableServiceClient
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import mysql.connector
+from mysql.connector import Error
 from pydantic import BaseModel, Field
 
 fastapi_app = FastAPI(title="swa-fastapi-api", version="1.0.0")
@@ -23,8 +24,12 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 USDA_BASE_URL = "https://api.nal.usda.gov/fdc/v1"
 USDA_API_KEY = os.getenv("USDA_API_KEY")
-TABLE_NAME = os.getenv("CALORIE_LOG_TABLE_NAME", "CalorieLog")
-TABLE_CONNECTION_STRING = os.getenv("AZURE_TABLE_STORAGE_CONNECTION_STRING")
+MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "calorie_tracker")
+MYSQL_TABLE = os.getenv("CALORIE_LOG_TABLE_NAME", "calorie_log")
 
 
 class ConsumedItemIn(BaseModel):
@@ -51,14 +56,46 @@ class ConsumedItemOut(BaseModel):
     fdc_id: int | None = None
 
 
-def get_table_client():
-    if not TABLE_CONNECTION_STRING:
-        return None
+def _validate_table_name(table_name: str) -> str:
+    if not table_name.replace("_", "").isalnum():
+        raise HTTPException(status_code=500, detail="CALORIE_LOG_TABLE_NAME contains invalid characters.")
+    return table_name
 
-    service_client = TableServiceClient.from_connection_string(TABLE_CONNECTION_STRING)
-    service_client.create_table_if_not_exists(table_name=TABLE_NAME)
-    table_client = service_client.get_table_client(table_name=TABLE_NAME)
-    return table_client
+
+def get_mysql_connection():
+    try:
+        connection = mysql.connector.connect(
+            host=MYSQL_HOST,
+            port=MYSQL_PORT,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            database=MYSQL_DATABASE,
+        )
+        return connection
+    except Error as exc:
+        raise HTTPException(status_code=500, detail="Unable to connect to MySQL.") from exc
+
+
+def ensure_consumption_table(connection) -> None:
+    table_name = _validate_table_name(MYSQL_TABLE)
+    query = f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            id VARCHAR(36) PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            food_description VARCHAR(500) NOT NULL,
+            serving_size_text VARCHAR(255) NULL,
+            calorie_basis_text VARCHAR(255) NULL,
+            quantity DOUBLE NOT NULL,
+            calories_per_serving DOUBLE NOT NULL,
+            total_calories DOUBLE NOT NULL,
+            consumed_at DATETIME(6) NOT NULL,
+            fdc_id INT NULL,
+            INDEX idx_user_consumed (user_id, consumed_at)
+        )
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query)
+    connection.commit()
 
 
 def extract_calories(food: dict) -> float:
@@ -180,30 +217,49 @@ async def get_food(fdc_id: int) -> dict:
 
 @fastapi_app.post("/api/consumptions", response_model=ConsumedItemOut)
 async def add_consumption(item: ConsumedItemIn) -> ConsumedItemOut:
-    table_client = get_table_client()
-    if not table_client:
-        raise HTTPException(
-            status_code=500,
-            detail="AZURE_TABLE_STORAGE_CONNECTION_STRING is not configured.",
-        )
-
     consumed_at = item.consumed_at or datetime.now(UTC)
     row_key = str(uuid4())
     total_calories = item.quantity * item.calories_per_serving
+    normalized_consumed_at = consumed_at.astimezone(UTC).replace(tzinfo=None)
 
-    entity = {
-        "PartitionKey": item.user_id,
-        "RowKey": row_key,
-        "food_description": item.food_description,
-        "serving_size_text": item.serving_size_text,
-        "calorie_basis_text": item.calorie_basis_text,
-        "quantity": item.quantity,
-        "calories_per_serving": item.calories_per_serving,
-        "total_calories": total_calories,
-        "consumed_at": consumed_at.isoformat(),
-        "fdc_id": item.fdc_id,
-    }
-    table_client.upsert_entity(entity=entity)
+    connection = get_mysql_connection()
+    try:
+        ensure_consumption_table(connection)
+        table_name = _validate_table_name(MYSQL_TABLE)
+        insert_query = f"""
+            INSERT INTO {table_name} (
+                id,
+                user_id,
+                food_description,
+                serving_size_text,
+                calorie_basis_text,
+                quantity,
+                calories_per_serving,
+                total_calories,
+                consumed_at,
+                fdc_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        with connection.cursor() as cursor:
+            cursor.execute(
+                insert_query,
+                (
+                    row_key,
+                    item.user_id,
+                    item.food_description,
+                    item.serving_size_text,
+                    item.calorie_basis_text,
+                    item.quantity,
+                    item.calories_per_serving,
+                    total_calories,
+                    normalized_consumed_at,
+                    item.fdc_id,
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
 
     return ConsumedItemOut(
         id=row_key,
@@ -214,59 +270,76 @@ async def add_consumption(item: ConsumedItemIn) -> ConsumedItemOut:
         quantity=item.quantity,
         calories_per_serving=item.calories_per_serving,
         total_calories=total_calories,
-        consumed_at=entity["consumed_at"],
+        consumed_at=normalized_consumed_at.replace(tzinfo=UTC).isoformat(),
         fdc_id=item.fdc_id,
     )
 
 
 @fastapi_app.get("/api/consumptions")
 async def list_consumptions(user_id: str = "default-user") -> dict:
-    table_client = get_table_client()
-    if not table_client:
-        raise HTTPException(
-            status_code=500,
-            detail="AZURE_TABLE_STORAGE_CONNECTION_STRING is not configured.",
-        )
-
-    entities = table_client.query_entities(
-        query_filter="PartitionKey eq @pk",
-        parameters={"pk": user_id},
-    )
+    connection = get_mysql_connection()
+    try:
+        ensure_consumption_table(connection)
+        table_name = _validate_table_name(MYSQL_TABLE)
+        select_query = f"""
+            SELECT
+                id,
+                user_id,
+                food_description,
+                serving_size_text,
+                calorie_basis_text,
+                quantity,
+                calories_per_serving,
+                total_calories,
+                consumed_at,
+                fdc_id
+            FROM {table_name}
+            WHERE user_id = %s
+            ORDER BY consumed_at DESC
+        """
+        with connection.cursor(dictionary=True) as cursor:
+            cursor.execute(select_query, (user_id,))
+            rows = cursor.fetchall()
+    finally:
+        connection.close()
 
     items = [
         {
-            "id": entity["RowKey"],
-            "user_id": entity["PartitionKey"],
-            "food_description": entity.get("food_description", ""),
-            "serving_size_text": entity.get("serving_size_text"),
-            "calorie_basis_text": entity.get("calorie_basis_text"),
-            "quantity": float(entity.get("quantity", 0)),
-            "calories_per_serving": float(entity.get("calories_per_serving", 0)),
-            "total_calories": float(entity.get("total_calories", 0)),
-            "consumed_at": entity.get("consumed_at", ""),
-            "fdc_id": entity.get("fdc_id"),
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "food_description": row["food_description"] or "",
+            "serving_size_text": row["serving_size_text"],
+            "calorie_basis_text": row["calorie_basis_text"],
+            "quantity": float(row["quantity"]),
+            "calories_per_serving": float(row["calories_per_serving"]),
+            "total_calories": float(row["total_calories"]),
+            "consumed_at": row["consumed_at"].replace(tzinfo=UTC).isoformat(),
+            "fdc_id": row["fdc_id"],
         }
-        for entity in entities
+        for row in rows
     ]
 
-    items.sort(key=lambda x: x["consumed_at"], reverse=True)
     return {"items": items}
 
 
 @fastapi_app.delete("/api/consumptions/{item_id}")
 async def delete_consumption(item_id: str, user_id: str = "default-user") -> dict:
-    table_client = get_table_client()
-    if not table_client:
-        raise HTTPException(
-            status_code=500,
-            detail="AZURE_TABLE_STORAGE_CONNECTION_STRING is not configured.",
-        )
-
+    connection = get_mysql_connection()
     try:
-        table_client.delete_entity(partition_key=user_id, row_key=item_id)
-        return {"message": "Item deleted successfully"}
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail="Item not found") from exc
+        ensure_consumption_table(connection)
+        table_name = _validate_table_name(MYSQL_TABLE)
+        delete_query = f"DELETE FROM {table_name} WHERE id = %s AND user_id = %s"
+        with connection.cursor() as cursor:
+            cursor.execute(delete_query, (item_id, user_id))
+            affected_rows = cursor.rowcount
+        connection.commit()
+    finally:
+        connection.close()
+
+    if affected_rows == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    return {"message": "Item deleted successfully"}
 
 
 @app.function_name(name="fastapi")

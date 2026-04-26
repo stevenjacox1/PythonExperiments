@@ -1,4 +1,4 @@
 azure-functions
 fastapi
 httpx
-azure-data-tables
+mysql-connector-python
