@@ -6,8 +6,9 @@ from uuid import uuid4
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import mysql.connector
-from mysql.connector import Error
+import pymysql
+from pymysql import MySQLError
+from pymysql.cursors import DictCursor
 from pydantic import BaseModel, Field
 
 fastapi_app = FastAPI(title="swa-fastapi-api", version="1.0.0")
@@ -62,9 +63,38 @@ def _validate_table_name(table_name: str) -> str:
     return table_name
 
 
-def get_mysql_connection():
+def _validate_database_name(database_name: str) -> str:
+    if not database_name.replace("_", "").isalnum():
+        raise HTTPException(status_code=500, detail="MYSQL_DATABASE contains invalid characters.")
+    return database_name
+
+
+def ensure_database_exists() -> None:
+    database_name = _validate_database_name(MYSQL_DATABASE)
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
+            host=MYSQL_HOST,
+            port=MYSQL_PORT,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            autocommit=True,
+        )
+    except MySQLError as exc:
+        raise HTTPException(status_code=500, detail="Unable to connect to MySQL server.") from exc
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {database_name}")
+    except MySQLError as exc:
+        raise HTTPException(status_code=500, detail="Unable to create or access MySQL database.") from exc
+    finally:
+        connection.close()
+
+
+def get_mysql_connection():
+    ensure_database_exists()
+    try:
+        connection = pymysql.connect(
             host=MYSQL_HOST,
             port=MYSQL_PORT,
             user=MYSQL_USER,
@@ -72,7 +102,7 @@ def get_mysql_connection():
             database=MYSQL_DATABASE,
         )
         return connection
-    except Error as exc:
+    except MySQLError as exc:
         raise HTTPException(status_code=500, detail="Unable to connect to MySQL.") from exc
 
 
@@ -297,7 +327,7 @@ async def list_consumptions(user_id: str = "default-user") -> dict:
             WHERE user_id = %s
             ORDER BY consumed_at DESC
         """
-        with connection.cursor(dictionary=True) as cursor:
+        with connection.cursor(DictCursor) as cursor:
             cursor.execute(select_query, (user_id,))
             rows = cursor.fetchall()
     finally:
