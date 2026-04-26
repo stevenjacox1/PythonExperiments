@@ -77,11 +77,36 @@ jobs:
 
       - name: Extract SWA Resource Name and Configure Function App Settings
         shell: bash
+        env:
+          MYSQL_HOST: ${{ secrets.MYSQL_HOST }}
+          MYSQL_PORT: ${{ secrets.MYSQL_PORT }}
+          MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+          CALORIE_LOG_TABLE_NAME: ${{ secrets.CALORIE_LOG_TABLE_NAME }}
+          USDA_API_KEY: ${{ secrets.USDA_API_KEY }}
         run: |
           RESOURCE_GROUP="rg-pythonexp-swa"
+
+          required_vars=(
+            MYSQL_HOST
+            MYSQL_PORT
+            MYSQL_USER
+            MYSQL_PASSWORD
+            MYSQL_DATABASE
+            CALORIE_LOG_TABLE_NAME
+            USDA_API_KEY
+          )
+
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name}" ]; then
+              echo "Error: Required secret $var_name is empty or not set in GitHub Actions secrets."
+              exit 1
+            fi
+          done
           
           # Try to get the SWA URL from deployment output first
-          SWA_URL="${{ needs.build_and_deploy_job.outputs.static_web_app_url }}"
+          SWA_URL="${{ steps.builddeploy_retry.outputs.static_web_app_url || steps.builddeploy.outputs.static_web_app_url }}"
           
           # If URL from output is empty, query Azure directly to find the SWA resource
           if [ -z "$SWA_URL" ]; then
@@ -107,13 +132,13 @@ jobs:
             --name "$SWA_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --setting-names \
-              "MYSQL_HOST=${{ secrets.MYSQL_HOST }}" \
-              "MYSQL_PORT=${{ secrets.MYSQL_PORT }}" \
-              "MYSQL_USER=${{ secrets.MYSQL_USER }}" \
-              "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" \
-              "MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}" \
-              "CALORIE_LOG_TABLE_NAME=${{ secrets.CALORIE_LOG_TABLE_NAME }}" \
-              "USDA_API_KEY=${{ secrets.USDA_API_KEY }}"
+              "MYSQL_HOST=$MYSQL_HOST" \
+              "MYSQL_PORT=$MYSQL_PORT" \
+              "MYSQL_USER=$MYSQL_USER" \
+              "MYSQL_PASSWORD=$MYSQL_PASSWORD" \
+              "MYSQL_DATABASE=$MYSQL_DATABASE" \
+              "CALORIE_LOG_TABLE_NAME=$CALORIE_LOG_TABLE_NAME" \
+              "USDA_API_KEY=$USDA_API_KEY"
           
           echo "SWA app settings configured successfully."
 
