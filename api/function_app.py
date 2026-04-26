@@ -103,6 +103,7 @@ def get_mysql_connection():
         )
         return connection
     except MySQLError as exc:
+        print(f"MySQL connection failed for host={MYSQL_HOST} db={MYSQL_DATABASE} user={MYSQL_USER}: {exc}")
         raise HTTPException(status_code=500, detail="Unable to connect to MySQL.") from exc
 
 

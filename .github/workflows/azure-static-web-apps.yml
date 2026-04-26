@@ -104,6 +104,11 @@ jobs:
               exit 1
             fi
           done
+
+          if [ "$MYSQL_HOST" = "localhost" ] || [ "$MYSQL_HOST" = "127.0.0.1" ]; then
+            echo "Error: MYSQL_HOST is set to $MYSQL_HOST. Cloud Functions cannot connect to a local database host."
+            exit 1
+          fi
           
           # Get deployment URL if available, but do not assume URL prefix equals Azure resource name.
           SWA_URL="${{ steps.builddeploy_retry.outputs.static_web_app_url || steps.builddeploy.outputs.static_web_app_url }}"
@@ -146,6 +151,18 @@ jobs:
               "MYSQL_DATABASE=$MYSQL_DATABASE" \
               "CALORIE_LOG_TABLE_NAME=$CALORIE_LOG_TABLE_NAME" \
               "USDA_API_KEY=$USDA_API_KEY"
+
+          APPSETTING_KEYS=$(az staticwebapp appsettings list \
+            --name "$SWA_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "properties | keys(@)" -o tsv)
+
+          for required_key in "${required_vars[@]}"; do
+            if ! echo "$APPSETTING_KEYS" | grep -qx "$required_key"; then
+              echo "Error: Expected app setting key $required_key was not found after configuration."
+              exit 1
+            fi
+          done
           
           echo "SWA app settings configured successfully."
 
