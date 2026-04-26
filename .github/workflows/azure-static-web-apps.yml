@@ -78,15 +78,27 @@ jobs:
       - name: Extract SWA Resource Name and Configure Function App Settings
         shell: bash
         run: |
+          RESOURCE_GROUP="rg-pythonexp-swa"
+          
+          # Try to get the SWA URL from deployment output first
           SWA_URL="${{ needs.build_and_deploy_job.outputs.static_web_app_url }}"
+          
+          # If URL from output is empty, query Azure directly to find the SWA resource
           if [ -z "$SWA_URL" ]; then
-            echo "SWA URL not available, skipping Function App configuration."
-            exit 0
+            echo "Deployment output URL not available, querying Azure for SWA resource..."
+            SWA_NAME=$(az staticwebapp list --resource-group "$RESOURCE_GROUP" --query "[0].name" -o tsv)
+            if [ -z "$SWA_NAME" ] || [ "$SWA_NAME" = "None" ]; then
+              echo "Error: Could not find Static Web App in resource group $RESOURCE_GROUP"
+              exit 1
+            fi
+            SWA_URL="https://${SWA_NAME}.azurestaticapps.net"
+            echo "Found SWA: $SWA_NAME with URL: $SWA_URL"
+          else
+            # Extract resource name from URL (e.g., icy-river-0fa6d120f from icy-river-0fa6d120f.7.azurestaticapps.net)
+            SWA_NAME=$(echo "$SWA_URL" | sed 's/https:\/\/\([^.]*\).*/\1/')
+            echo "Using SWA from deployment output: $SWA_NAME"
           fi
 
-          # Extract resource name from URL (e.g., icy-river-0fa6d120f from icy-river-0fa6d120f.7.azurestaticapps.net)
-          SWA_NAME=$(echo "$SWA_URL" | sed 's/https:\/\/\([^.]*\).*/\1/')
-          RESOURCE_GROUP="rg-pythonexp-swa"
           FUNCTION_APP_NAME="${SWA_NAME}-api"
 
           echo "Configuring Function App: $FUNCTION_APP_NAME in resource group: $RESOURCE_GROUP"
@@ -103,7 +115,9 @@ jobs:
               MYSQL_DATABASE="${{ secrets.MYSQL_DATABASE }}" \
               CALORIE_LOG_TABLE_NAME="${{ secrets.CALORIE_LOG_TABLE_NAME }}" \
               USDA_API_KEY="${{ secrets.USDA_API_KEY }}" \
-              FUNCTIONS_WORKER_RUNTIME="python" || echo "Note: Function App settings may have been partially configured. Verify in Azure Portal if needed."
+              FUNCTIONS_WORKER_RUNTIME="python"
+          
+          echo "Function App settings configured successfully."
 
       - name: Azure Logout
         run: az logout
